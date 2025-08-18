@@ -164,7 +164,7 @@ class State:
             h = compress(self.key, cv + h, 0, 64, d, True)
         return h
 
-def run_hash(fname: str, input_bytes: bytes):
+def run_hash(fname: str, input_bytes: bytes, bsd_format: bool):
     state = State()
     for b in input_bytes:
         state.input_byte(b)
@@ -172,7 +172,10 @@ def run_hash(fname: str, input_bytes: bytes):
     h = state.finalize()
 
     hashstr = format_hash(h)
-    print(f'{hashstr}  {fname}')
+    if bsd_format:
+        print(f'BLAKE3 ({fname}) = {hashstr}')
+    else:
+        print(f'{hashstr}  {fname}')
 
 
 def split_message_block(block: list[int]) -> list[int]:
@@ -184,16 +187,19 @@ def format_hash(h: list[int]) -> str:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--tag', action='store_true')
     parser.add_argument('inputs', nargs='*')
     args = parser.parse_args()
 
+    bsd_format = args.tag
+
     if len(args.inputs) == 0:
-        run_hash('-', sys.stdin.buffer.read())
+        run_hash('-', sys.stdin.buffer.read(), bsd_format)
     else:
         for i in args.inputs:
             if i == '-':
-                run_hash('-', sys.stdin.buffer.read())
+                run_hash('-', sys.stdin.buffer.read(), bsd_format)
             else:
-                run_hash(i, open(i, 'rb').read())
+                run_hash(i, open(i, 'rb').read(), bsd_format)
 
 main()
