@@ -41,3 +41,5 @@ test "$(repeat "a" 2000)"
 test "$(repeat "a" 2048)"
 test "$(repeat "a" 2049)"
 test "$(repeat "a" 100000)"
+
+echo "all tests passed"
