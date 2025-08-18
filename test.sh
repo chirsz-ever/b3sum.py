@@ -14,14 +14,16 @@ streq() {
 }
 
 test() {
-    s1=$(printf "%s" "$1" | b3sum)
-    s2=$(printf "%s" "$1" | ./b3sum.py)
-    if [[ $s1 != "$s2" ]]; then
-        echo "error: difference when hash \"$1\"" >&2
-        echo "  b3sum:    $s1" >&2
-        echo "  b3sum.py: $s2" >&2
-        exit 1
-    fi
+    for l in 32 33 50 63 64 65 100 127 128 129 200; do
+        s1=$(printf "%s" "$1" | b3sum -l $l)
+        s2=$(printf "%s" "$1" | ./b3sum.py -l $l)
+        if [[ $s1 != "$s2" ]]; then
+            echo "error: difference when hash \"$1\" with length=$l" >&2
+            echo "  b3sum:    $s1" >&2
+            echo "  b3sum.py: $s2" >&2
+            exit 1
+        fi
+    done
 }
 
 test ""

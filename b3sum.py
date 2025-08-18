@@ -91,6 +91,29 @@ def round_permute(m: list[int]):
     m[0], m[2], m[3], m[10], m[12], m[9], m[11], m[5] = m[2], m[3], m[10], m[12], m[9], m[11], m[5], m[0]
     m[1], m[6], m[4], m[7], m[13], m[14], m[15], m[8] = m[6], m[4], m[7], m[13], m[14], m[15], m[8], m[1]
 
+def compress_chunk(input_buffer: list[int], key: list[int], t: int, is_root: bool, truncate: bool):
+    l = len(input_buffer)
+    h = key
+    last_h = key
+    block_truncate = True
+    for i in range(0, l, 64):
+        block = input_buffer[i:i+64]
+        b = len(block)
+        if b < 64:
+            block += [0] * (64 - b)
+        d = 0
+        if i == 0:
+            d |= CHUNK_START
+        if i + 64 >= l:
+            d |= CHUNK_END
+            if is_root:
+                d |= ROOT
+            block_truncate = truncate
+        m = split_message_block(block)
+        last_h = h
+        h = compress(h, m, t, b, d, block_truncate)
+    return h, last_h
+
 CHUNK_START = 1
 CHUNK_END   = 2
 PARENT      = 4
@@ -125,7 +148,7 @@ class State:
                 d |= CHUNK_END
             m = split_message_block(block)
             h = compress(h, m, self.t, b, d, True)
-        return h
+        return compress_chunk(self.input_buffer, self.key, self.t, is_root=False, truncate=True)[0]
 
     def add_chunk_chaining_value(self, new_cv: list[int]):
         total_chunks = self.t + 1
@@ -134,72 +157,92 @@ class State:
             total_chunks >>= 1
         self.cv_stack.append(new_cv)
 
-    def finalize(self) -> list[int]:
+    def finalize(self, length: int) -> list[int]:
+        total_blocks = (length + 63) // 64
         l = len(self.input_buffer)
+        last_h = self.key
+        last_m = [0]*16
+        last_t = 0
+        last_b = 0
+        last_d = 0
         if l == 0:
             assert len(self.cv_stack) == 0
-            return compress(self.key, [0]*16, self.t, 0, CHUNK_START|CHUNK_END|ROOT, True)
+            last_d = CHUNK_START|CHUNK_END|ROOT
+            h = compress(self.key, last_m, last_t, last_b, last_d, False)
+        else:
+            is_root = len(self.cv_stack) == 0
+            if is_root:
+                last_m, last_b, last_d = get_last_block_info(self.input_buffer)
+            h, last_h = compress_chunk(self.input_buffer, self.key, self.t, is_root, truncate=not is_root)
 
-        h = self.key
-        for i in range(0, l, 64):
-            block = self.input_buffer[i:i+64]
-            b = len(block)
-            if b < 64:
-                block += [0] * (64 - b)
-            d = 0
-            if i == 0:
-                d |= CHUNK_START
-            if i + 64 >= l:
-                d |= CHUNK_END
-                if len(self.cv_stack) == 0:
+            while len(self.cv_stack) != 0:
+                cv = self.cv_stack.pop()
+                d = PARENT
+                is_root = len(self.cv_stack) == 0
+                if is_root:
                     d |= ROOT
-            m = split_message_block(block)
-            h = compress(h, m, self.t, b, d, True)
-
-        while len(self.cv_stack) != 0:
-            cv = self.cv_stack.pop()
-            d = PARENT
-            if len(self.cv_stack) == 0:
-                d |= ROOT
-            h = compress(self.key, cv + h, 0, 64, d, True)
+                last_m = cv + h
+                last_b = 64
+                last_d = d
+                last_h = self.key
+                h = compress(self.key, last_m, last_t, last_b, last_d, truncate=not is_root)
+        while total_blocks > 1:
+            last_t += 1
+            h += compress(last_h, last_m, last_t, last_b, last_d, False)
+            total_blocks -= 1
         return h
 
-def run_hash(fname: str, input_bytes: bytes, bsd_format: bool):
+def run_hash(fname: str, input_bytes: bytes, output_length: int, bsd_format: bool):
     state = State()
     for b in input_bytes:
         state.input_byte(b)
 
-    h = state.finalize()
+    h = state.finalize(output_length)
 
-    hashstr = format_hash(h)
+    hashstr = format_hash(h, output_length)
     if bsd_format:
         print(f'BLAKE3 ({fname}) = {hashstr}')
     else:
         print(f'{hashstr}  {fname}')
 
+def get_last_block_info(buffer: list[int]) -> tuple[list[int], int, int]:
+    l = len(buffer)
+    o = l - 64 if l % 64 == 0 else l - l % 64
+    last_block = buffer[o:o+64]
+    b = len(last_block)
+    if len(last_block) < 64:
+        last_block += [0] * (64 - b)
+    m = split_message_block(last_block)
+    d = ROOT | CHUNK_END
+    if l <= 64:
+        d |= CHUNK_START
+    return m, b, d
 
 def split_message_block(block: list[int]) -> list[int]:
     assert len(block) == 64
     return [int.from_bytes(block[i:i+4], 'little') for i in range(0, 64, 4)]
 
-def format_hash(h: list[int]) -> str:
-    return ''.join(f'{b:02x}' for n in h for b in n.to_bytes(4, 'little'))
+def format_hash(h: list[int], byte_length: int) -> str:
+    lh = (byte_length + 3) // 4
+    return ''.join(f'{b:02x}' for n in h[:lh] for b in n.to_bytes(4, 'little'))[:byte_length*2]
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--tag', action='store_true')
+    parser.add_argument('-l', '--length', type=int, default=32, required=False)
     parser.add_argument('inputs', nargs='*')
     args = parser.parse_args()
 
     bsd_format = args.tag
+    output_length = args.length
 
     if len(args.inputs) == 0:
-        run_hash('-', sys.stdin.buffer.read(), bsd_format)
+        run_hash('-', sys.stdin.buffer.read(), output_length, bsd_format)
     else:
         for i in args.inputs:
             if i == '-':
-                run_hash('-', sys.stdin.buffer.read(), bsd_format)
+                run_hash('-', sys.stdin.buffer.read(), output_length, bsd_format)
             else:
-                run_hash(i, open(i, 'rb').read(), bsd_format)
+                run_hash(i, open(i, 'rb').read(), output_length, bsd_format)
 
 main()
