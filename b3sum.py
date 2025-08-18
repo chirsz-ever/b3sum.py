@@ -16,7 +16,7 @@ IV = [
 ]
 
 
-def compress(h: list[int], m: list[int], t: int, b: int, d: int) -> list[int]:
+def compress(h: list[int], m: list[int], t: int, b: int, d: int, truncate: bool) -> list[int]:
     """
     h: u32[8],
     m: u32[16],
@@ -56,7 +56,9 @@ def compress(h: list[int], m: list[int], t: int, b: int, d: int) -> list[int]:
         debug(f'  {' '.join(f'{x:08x}' for x in v[0:8])}')
         debug(f'  {' '.join(f'{x:08x}' for x in v[8:16])}')
 
-    h_o = [v[i]^v[i+8] for i in range(8)] + [v[i+8]^h[i] for i in range(8)]
+    h_o = [v[i]^v[i+8] for i in range(8)]
+    if not truncate:
+        h_o += [v[i+8]^h[i] for i in range(8)]
     return h_o
 
 def round_(m, v: list[int]) -> list[int]:
@@ -90,7 +92,76 @@ def round_permute(m: list[int]):
 
 CHUNK_START = 1
 CHUNK_END   = 2
+PARENT      = 4
 ROOT        = 8
+
+class State:
+    def __init__(self):
+        self.cv_stack: list[list[int]] = []
+        self.input_buffer: list[int] = []
+        self.block_count = 0
+        self.t = 0
+        self.key = IV[0:8]
+
+    def input_byte(self, b: int):
+        if len(self.input_buffer) == 1024:
+            new_cv = self.make_new_leave_cv()
+            self.add_chunk_chaining_value(new_cv)
+            self.input_buffer.clear()
+            self.t += 1
+        self.input_buffer.append(b)
+
+    def make_new_leave_cv(self) -> list[int]:
+        assert len(self.input_buffer) == 1024
+        h = self.key
+        for i in range(0, 1024, 64):
+            block = self.input_buffer[i:i+64]
+            b = 64
+            d = 0
+            if i == 0:
+                d |= CHUNK_START
+            if i + 64 >= 1024:
+                d |= CHUNK_END
+            m = split_message_block(block)
+            h = compress(h, m, self.t, b, d, True)
+        return h
+
+    def add_chunk_chaining_value(self, new_cv: list[int]):
+        total_chunks = self.t + 1
+        while total_chunks & 1 == 0:
+            new_cv = compress(self.key, self.cv_stack.pop() + new_cv, 0, 64, PARENT, True)
+            total_chunks >>= 1
+        self.cv_stack.append(new_cv)
+
+    def finalize(self) -> list[int]:
+        l = len(self.input_buffer)
+        if l == 0:
+            assert len(self.cv_stack) == 0
+            return compress(self.key, [0]*16, self.t, 0, CHUNK_START|CHUNK_END|ROOT, True)
+
+        h = self.key
+        for i in range(0, l, 64):
+            block = self.input_buffer[i:i+64]
+            b = len(block)
+            if b < 64:
+                block += [0] * (64 - b)
+            d = 0
+            if i == 0:
+                d |= CHUNK_START
+            if i + 64 >= l:
+                d |= CHUNK_END
+                if len(self.cv_stack) == 0:
+                    d |= ROOT
+            m = split_message_block(block)
+            h = compress(h, m, self.t, b, d, True)
+
+        while len(self.cv_stack) != 0:
+            cv = self.cv_stack.pop()
+            d = PARENT
+            if len(self.cv_stack) == 0:
+                d |= ROOT
+            h = compress(self.key, cv + h, 0, 64, d, True)
+        return h
 
 def main():
     if len(sys.argv) < 2:
@@ -101,31 +172,18 @@ def main():
         fname = sys.argv[1]
     l = len(input_bytes)
     debug(f'{l=}')
-    if l > 1024:
-        print(f"error, input too long: {l}", file=sys.stderr)
-        exit(1)
-    t = 0
-    h = IV[0:8]
-    if l == 0:
-        h = compress(h, [0]*16, t, 0, CHUNK_START|CHUNK_END|ROOT)[0:8]
-    for i in range(0, l, 64):
-        block = input_bytes[i:i+64]
-        b = len(block)
-        if b < 64:
-            block += b'\0' * (64 - b)
-        d = 0
-        if i == 0:
-            d |= CHUNK_START
-        if i + 64 >= l:
-            d |= CHUNK_END
-            d |= ROOT
-        m = split_message_block(block)
-        h = compress(h, m, t, b, d)[0:8]
+
+    state = State()
+    for b in input_bytes:
+        state.input_byte(b)
+
+    h = state.finalize()
+
     hashstr = format_hash(h)
     print(f'{hashstr}  {fname}')
 
 
-def split_message_block(block: bytes) -> list[int]:
+def split_message_block(block: list[int]) -> list[int]:
     assert len(block) == 64
     return [int.from_bytes(block[i:i+4], 'little') for i in range(0, 64, 4)]
 
