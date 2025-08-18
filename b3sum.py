@@ -2,6 +2,7 @@
 
 import sys
 import os
+import argparse
 
 enable_debug = os.environ.get('DEBUG')
 enable_debug = enable_debug is not None and len(enable_debug) > 0
@@ -163,16 +164,7 @@ class State:
             h = compress(self.key, cv + h, 0, 64, d, True)
         return h
 
-def main():
-    if len(sys.argv) < 2:
-        input_bytes = sys.stdin.buffer.read()
-        fname = '-'
-    else:
-        input_bytes = open(sys.argv[1], 'rb').read()
-        fname = sys.argv[1]
-    l = len(input_bytes)
-    debug(f'{l=}')
-
+def run_hash(fname: str, input_bytes: bytes):
     state = State()
     for b in input_bytes:
         state.input_byte(b)
@@ -189,5 +181,19 @@ def split_message_block(block: list[int]) -> list[int]:
 
 def format_hash(h: list[int]) -> str:
     return ''.join(f'{b:02x}' for n in h for b in n.to_bytes(4, 'little'))
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('inputs', nargs='*')
+    args = parser.parse_args()
+
+    if len(args.inputs) == 0:
+        run_hash('-', sys.stdin.buffer.read())
+    else:
+        for i in args.inputs:
+            if i == '-':
+                run_hash('-', sys.stdin.buffer.read())
+            else:
+                run_hash(i, open(i, 'rb').read())
 
 main()
