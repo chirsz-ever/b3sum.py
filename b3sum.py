@@ -130,10 +130,6 @@ def split_message_block(block: bytes) -> list[int]:
     return [int.from_bytes(block[i:i+4], 'little') for i in range(0, 64, 4)]
 
 def format_hash(h: list[int]) -> str:
-    return ''.join(le4(b) for b in h)
-
-def le4(b: int) -> str:
-    s = f'{b:08x}'
-    return s[6:8] + s[4:6] + s[2:4] + s[0:2]
+    return ''.join(f'{b:02x}' for n in h for b in n.to_bytes(4, 'little'))
 
 main()
