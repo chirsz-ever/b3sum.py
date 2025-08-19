@@ -7,7 +7,7 @@ import argparse
 enable_debug = os.environ.get('DEBUG')
 enable_debug = enable_debug is not None and len(enable_debug) > 0
 
-def debug(msg):
+def debug(msg: str):
     if enable_debug:
         print(f'\033[34m[DEBUG]\033[0m {msg}')
 
@@ -27,15 +27,16 @@ def compress(h: list[int], m: list[int], t: int, b: int, d: int, truncate: bool)
     return: u32[16]
     """
 
-    debug(f'compress:')
-    debug(f'  h:')
-    debug(f'  {' '.join(f'{x:08x}' for x in h)}')
-    debug(f'  m:')
-    debug(f'  {' '.join(f'{x:08x}' for x in m[0:8])}')
-    debug(f'  {' '.join(f'{x:08x}' for x in m[8:16])}')
-    debug(f'  t: {t}')
-    debug(f'  b: {b}')
-    debug(f'  d: {d:02x}')
+    if enable_debug:
+        debug(f"compress:")
+        debug(f"  h:")
+        debug(f"  {' '.join(f'{x:08x}' for x in h)}")
+        debug(f"  m:")
+        debug(f"  {' '.join(f'{x:08x}' for x in m[0:8])}")
+        debug(f"  {' '.join(f'{x:08x}' for x in m[8:16])}")
+        debug(f"  t: {t}")
+        debug(f"  b: {b}")
+        debug(f"  d: {d:02x}")
 
     v0, v1, v2, v3, v4, v5, v6, v7 = h
     v8,  v9,  v10, v11 = IV[0:4]
@@ -53,16 +54,17 @@ def compress(h: list[int], m: list[int], t: int, b: int, d: int, truncate: bool)
         if i != 0:
             round_permute(m)
         v = round_(m, v)
-        debug(f'  after round {i}:')
-        debug(f'  {' '.join(f'{x:08x}' for x in v[0:8])}')
-        debug(f'  {' '.join(f'{x:08x}' for x in v[8:16])}')
+        if enable_debug:
+            debug(f"  after round {i}:")
+            debug(f"  {' '.join(f'{x:08x}' for x in v[0:8])}")
+            debug(f"  {' '.join(f'{x:08x}' for x in v[8:16])}")
 
     h_o = [v[i]^v[i+8] for i in range(8)]
     if not truncate:
         h_o += [v[i+8]^h[i] for i in range(8)]
     return h_o
 
-def round_(m, v: list[int]) -> list[int]:
+def round_(m: list[int], v: list[int]) -> list[int]:
     # v = v[:]
     G(0, m, v, 0, 4, 8, 12)
     G(1, m, v, 1, 5, 9, 13)
